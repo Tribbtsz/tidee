@@ -624,7 +624,7 @@ const counts = computed(() => Object.fromEntries(categoryStats.value) as Record<
 
       </div>
 
-      <div v-else class="content">
+      <div v-else class="content settings-content">
         <SettingsPanel embedded />
       </div>
     </main>

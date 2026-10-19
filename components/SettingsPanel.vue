@@ -23,6 +23,7 @@ import { DEFAULT_CATEGORIES, UNCATEGORIZED } from '../lib/constants';
 import type { CategoryDef, Settings } from '../lib/types';
 import { categoryStyle } from '../composables/useBookmarkView';
 import { useTidee } from '../composables/useTidee';
+import { normalizeSettings } from '../lib/store';
 import { hostOf } from '../lib/url';
 import ConfirmDialog from './ConfirmDialog.vue';
 import UiSelect from './UiSelect.vue';
@@ -56,6 +57,26 @@ const undoBusy = ref(false);
 const storageBytes = ref(0);
 const clearConfirmOpen = ref(false);
 
+const DRAFT_KEY = 'tidee.settings.draft.v1';
+
+function loadDraft(): Settings | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    return normalizeSettings(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function clearDraft(): void {
+  try {
+    localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(settings.value));
 const configured = computed(
   () => Boolean(draft.value.baseUrl.trim() && draft.value.model.trim()),
@@ -81,8 +102,29 @@ watch(
   { deep: true },
 );
 
+watch(
+  draft,
+  () => {
+    try {
+      if (dirty.value) {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(draft.value));
+      } else {
+        localStorage.removeItem(DRAFT_KEY);
+      }
+    } catch {
+      // Ignore quota or privacy-mode failures.
+    }
+  },
+  { deep: true, flush: 'post' },
+);
+
 onMounted(async () => {
-  if (!dirty.value) draft.value = clone(settings.value);
+  const savedDraft = loadDraft();
+  if (savedDraft) {
+    draft.value = savedDraft;
+  } else if (!dirty.value) {
+    draft.value = clone(settings.value);
+  }
   try {
     storageBytes.value = await chrome.storage.local.getBytesInUse(null);
   } catch {
@@ -171,11 +213,13 @@ async function save() {
   }
   const saved = await saveSettings(draft.value);
   draft.value = clone(saved);
-  pushToast('设置已保存', 'success');
+  clearDraft();
+  pushToast('设置已保存并生效', 'success');
 }
 
 function reset() {
   draft.value = clone(settings.value);
+  clearDraft();
 }
 
 function clearMeta() {
@@ -210,14 +254,31 @@ const sections = [
 </script>
 
 <template>
-  <div :class="props.embedded ? 'settings-single' : 'settings-grid'">
-    <nav v-if="!props.embedded" class="settings-nav">
-      <a v-for="section in sections" :key="section.id" class="nav-item" :href="`#${section.id}`">
-        {{ section.label }}
-      </a>
-    </nav>
+  <div :class="props.embedded ? 'settings-embedded' : ''">
+    <Transition name="pop">
+      <div v-if="dirty" class="settings-dirty-bar">
+        <CircleAlert :size="18" class="shrink-0 text-[var(--danger)]" />
+        <div class="min-w-0 flex-1">
+          <div class="settings-dirty-title">有未保存的修改</div>
+          <div class="settings-dirty-hint">已自动保留，刷新不会丢失；保存后才会生效。</div>
+        </div>
+        <button class="btn btn-soft text-[var(--danger)]" @click="reset">放弃</button>
+        <button class="btn btn-primary" @click="save">
+          <Save :size="14" />
+          保存设置
+        </button>
+      </div>
+    </Transition>
 
-    <div>
+    <div :class="props.embedded ? 'settings-embedded-scroll' : ''">
+      <div :class="props.embedded ? 'settings-single' : 'settings-grid'">
+        <nav v-if="!props.embedded" class="settings-nav">
+          <a v-for="section in sections" :key="section.id" class="nav-item" :href="`#${section.id}`">
+            {{ section.label }}
+          </a>
+        </nav>
+
+        <div>
       <!-- AI service -->
       <section id="ai" class="section">
         <div class="flex items-start gap-3">
@@ -541,6 +602,8 @@ const sections = [
           <span>Local-first</span>
         </div>
       </section>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -554,17 +617,4 @@ const sections = [
     @cancel="clearConfirmOpen = false"
   />
 
-  <Transition name="pop">
-    <div
-      v-if="dirty"
-      class="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-[10px] bg-[var(--surface)] p-2.5 pl-4 shadow-[var(--shadow)]"
-    >
-      <span class="text-[11.5px] text-[var(--muted)]">有未保存的修改</span>
-      <button class="btn btn-ghost btn-sm" @click="reset">放弃</button>
-      <button class="btn btn-primary btn-sm" @click="save">
-        <Save :size="13" />
-        保存
-      </button>
-    </div>
-  </Transition>
 </template>
